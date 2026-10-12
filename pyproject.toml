@@ -1,0 +1,30 @@
+[project]
+name = "llmseg"
+version = "1.0.0"
+description = "Training-free text-prompted image segmentation with a multimodal LLM and B-splines"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0",
+    "pillow>=10.0",
+    "scipy>=1.13",
+    "scikit-image>=0.25",
+    "python-dotenv>=1.0",
+    "google-genai>=1.0",
+    "anthropic>=0.40",
+    "openai>=1.50",
+]
+
+[project.optional-dependencies]
+evals = [
+    "pyarrow>=15.0",
+    "pycocotools>=2.0.8",
+    "huggingface_hub>=0.25",
+]
+download-roboflow = [
+    "roboflow>=1.1",
+    "rf100vl>=1.0",
+]
+
+[tool.uv]
+package = false

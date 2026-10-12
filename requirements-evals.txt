@@ -1,0 +1,6 @@
+-r requirements.txt
+# evaluation harness
+pyarrow>=15.0            # ReasonSeg / RefCOCO parquet files
+pycocotools>=2.0.8       # reference mask decoding + box / mask AP
+# dataset download scripts
+huggingface_hub>=0.25

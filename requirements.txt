@@ -1,0 +1,10 @@
+# core pipeline
+numpy>=2.0
+pillow>=10.0
+scipy>=1.13
+scikit-image>=0.25
+python-dotenv>=1.0
+# provider SDKs (only the one you use has to be importable)
+google-genai>=1.0        # Gemini API      (GEMINI_API_KEY)
+anthropic>=0.40          # Anthropic API   (ANTHROPIC_API_KEY)
+openai>=1.50             # OpenAI API and OpenRouter (OPENAI_API_KEY / OPENROUTER_API_KEY)
