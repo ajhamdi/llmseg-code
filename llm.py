@@ -550,6 +550,27 @@ def _needs_grid_rescale(values) -> bool:
     return bool(vals) and max(vals) <= NORMALIZED_GRID
 
 
+def to_model_len(px, model: str, extent) -> float:
+    """A pixel length along an axis of ``extent`` pixels -> the model's units."""
+    if not is_normalized_grid_model(model):
+        return float(px)
+    return float(px) * NORMALIZED_GRID / float(extent)
+
+
+def deltas_to_pixels(entry: dict, model: str, width, height) -> dict:
+    """Signed side deltas {x1, x2, y1, y2} of a box-adjust reply -> pixels (sign kept)."""
+    d = {}
+    for k in ("x1", "x2", "y1", "y2"):
+        try:
+            d[k] = float(entry.get(k, 0) or 0)
+        except (TypeError, ValueError):
+            d[k] = 0.0
+    if is_normalized_grid_model(model) and _needs_grid_rescale(d.values()):
+        sx, sy = float(width) / NORMALIZED_GRID, float(height) / NORMALIZED_GRID
+        d = {k: v * (sx if k[0] == "x" else sy) for k, v in d.items()}
+    return d
+
+
 def _box_coords(box):
     try:
         return [float(v) for v in list(box)[:4]]

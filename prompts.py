@@ -54,7 +54,7 @@ Return ONLY a JSON object (no prose, no markdown fences) with this exact schema:
     "aspect": "<tall|wide|square>",
     "convexity": "<convex|slightly-concave|highly-irregular>",
     "parts": ["<protruding/notable parts, e.g. 'left protrusion'>", "<'base contact'>", "..."]
-  }}
+  }}{topology_schema}
 }}]}}
 
 {box_format}
@@ -68,9 +68,7 @@ Return ONLY a JSON object (no prose, no markdown fences) with this exact schema:
   head, ears, paws) is clipped by the box. Prefer a roomy box over a tight crop;
   a later stage confines all outline tracing to this box, so an undersized box
   truncates the segmentation.
-- morphology describes the object's FORM (shape of its outline) so a later
-  stage can trace it.
-If nothing matches, return {{"detections": []}}.
+{form_note}If nothing matches, return {{"detections": []}}.
 Output the JSON and nothing else."""
 
 
@@ -111,10 +109,7 @@ SPLINE RULES (part 2):
 - Every control point for instance id=K MUST lie inside THAT instance's
   {box_field}={box_order} listed above.
 {point_order_note}
-- Fit as many closed B-splines as that instance's silhouette actually needs:
-  one per connected piece you can see (role "outer"), plus one per interior
-  hole you can see through (role "hole"). Decide the count from the image.
-- Use each instance's morphology to place control points on the true outline
+{loops_note}- Use each instance's morphology to place control points on the true outline
   (follow protrusions, concavities, corners, and curves named in the morphology).
 - If one instance's box is empty, unreadable, or holds nothing matching the
   "{label}", return an EMPTY "splines" list for that id rather than inventing an
@@ -131,6 +126,66 @@ Return ONLY this JSON (no prose, no markdown fences):
     {{"role": "outer", "degree": <same as top-level degree>, "closed": true,
       "control_points": [[x, y], [x, y], ...]}}
   ]}}
+]}}
+Output the JSON and nothing else."""
+
+
+# --------------------------------------------------------------------------- #
+# Stage 3-pre (opt-in, --refine-box): one signed per-side detect-box adjustment #
+# --------------------------------------------------------------------------- #
+PROMPT_BOX_ADJUST = """Read the image file at this absolute path: {overlay_path}
+
+This image shows the CURRENT segmentation of the "{label}":
+  - the translucent {mask_color} tint marks the current MASK REGION (coverage),
+  - the RED outline is the current mask BOUNDARY,
+  - each YELLOW rectangle is one instance's detection box (all later outline work
+    for that instance is confined to its box, so anything of that instance outside
+    it can NEVER be recovered, and empty room inside wastes the confinement).
+    Instance ids are drawn next to each yellow box.
+The {mask_color} fill is light on purpose: you can still see the {label}'s real
+edges/texture underneath. Use the {mask_color} tint + red outline for coverage;
+use the underlying pixels to judge the TRUE extent of each instance.
+{coord_space}
+
+INSTANCES (decide side deltas independently for EACH):
+{instances_block}
+
+Your task: for EACH instance, decide whether its yellow box is WRONG: too tight
+(clips the object), too loose (includes obvious empty background), or shifted
+(one side has slack while the opposite side clips). Adjust that box; otherwise
+leave it alone.
+
+Return a SIGNED side delta in the SAME coordinate units for each side of EACH
+instance:
+  - "x1": LEFT edge; positive expands LEFT (decrease left), negative shrinks
+    RIGHTWARD (increase left),
+  - "x2": RIGHT edge; positive expands RIGHT (increase right), negative shrinks
+    LEFTWARD (decrease right),
+  - "y1": TOP edge; positive expands UP (decrease top), negative shrinks
+    DOWNWARD (increase top),
+  - "y2": BOTTOM edge; positive expands DOWN (increase bottom), negative shrinks
+    UPWARD (decrease bottom).
+Each value may be positive, negative, or zero. Absolute value must not exceed
+the per-side cap listed above. Prefer ZERO on every side unless the yellow box
+is OBVIOUSLY wrong. Do NOT nudge for soft margins or tiny ambiguity. If a yellow
+box already tightly and fully contains its instance, return all zeros for that id.
+
+Hard caps are listed per instance above (same units; |delta| must not exceed).
+If a needed move would exceed the cap, move only up to the cap; do not ask for more.
+
+Rules:
+- Positive on a side ONLY when object of that instance clearly lies outside that
+  edge. Negative on a side ONLY when that edge clearly has empty background slack
+  and pulling it in would still leave the object inside.
+- You may combine signs across sides (e.g. +x1 and -x2) to shift or resize.
+- Leave a small generous margin past the true extent when you do move a side;
+  do not hug the silhouette so tightly that a later pass clips it again.
+- Default / preferred answer when the box looks fine: all zeros.
+- Return exactly one entry per instance id listed above.
+
+Return ONLY this JSON (no prose, no markdown fences):
+{{"instances": [
+  {{"id": 0, "x1": 0, "x2": 0, "y1": 0, "y2": 0}}
 ]}}
 Output the JSON and nothing else."""
 
@@ -299,6 +354,50 @@ def focus_degree_guidance() -> str:
         f"  per loop. Use each box's reported SHAPE to decide: near\n"
         f"  {FOCUS_CTRL_POINTS_MIN} for a simple bump/notch/sliver, closer to\n"
         f"  {FOCUS_CTRL_POINTS_MAX} only for a genuinely wiggly local edge."
+    )
+
+
+def topology_schema(topology: bool) -> str:
+    """Stage 1: the optional topology block of each detection (--topology)."""
+    if not topology:
+        return ""
+    return (
+        ',\n  "topology": {\n'
+        '    "components": <int number of disconnected pieces of the object silhouette>,\n'
+        '    "holes": <int number of enclosed background holes inside the silhouette (genus)>,\n'
+        '    "boundary_loops": <int total closed boundary curves = components + holes>,\n'
+        '    "notes": "<one short phrase, e.g. \'single blob, no holes\'>"\n'
+        '  }'
+    )
+
+
+def form_note(topology: bool) -> str:
+    """Stage 1: what the morphology (and, with --topology, topology) fields are for."""
+    if not topology:
+        return (
+            "- morphology describes the object's FORM (shape of its outline) so a later\n"
+            "  stage can trace it.\n"
+        )
+    return (
+        "- morphology describes the object's FORM (shape of its outline) so a later stage\n"
+        "  can trace it; topology describes its STRUCTURE (how many separate blobs and how\n"
+        "  many holes) so a later stage knows how many closed curves to fit.\n"
+    )
+
+
+def loops_note(topology: bool) -> str:
+    """Stage 2: how many loops per instance (counted from the image, or from topology)."""
+    if not topology:
+        return (
+            "- Fit as many closed B-splines as that instance's silhouette actually needs:\n"
+            "  one per connected piece you can see (role \"outer\"), plus one per interior\n"
+            "  hole you can see through (role \"hole\"). Decide the count from the image.\n"
+        )
+    return (
+        "- Fit ONE closed B-spline per connected blob of that instance\n"
+        "  (topology.components), plus ONE additional closed B-spline per interior hole\n"
+        "  (topology.holes), marking holes with \"role\":\"hole\". Outer silhouette loops use\n"
+        "  \"role\":\"outer\".\n"
     )
 
 

@@ -38,6 +38,9 @@ REFINE_EFFECT_MIN_PX = 16
 # gap is <= this % of the instance box's min dimension.
 BRIDGE_MAX_DIST_PCT = 15.0
 
+# Box-adjust pre-pass (--refine-box): per-side |delta| cap, % of the box W (x) / H (y).
+BOX_ADJUST_MAX_PCT = 20.0
+
 # Postprocessing (per pass): closing/opening radius as % of box min-dim, capped
 # at 2 px (and at least 1 px when applied); hole / speck caps as % of object
 # area with pixel floors.
@@ -213,6 +216,36 @@ def clamp_box(box, outer, size):
     return [x1, y1, x2, y2]
 
 
+def box_adjust_caps(box, pct: float = BOX_ADJUST_MAX_PCT) -> tuple:
+    """Per-side |delta| caps (pixels) for the box-adjust pre-pass: pct of box W (x) / H (y)."""
+    x1, y1, x2, y2 = (float(v) for v in box)
+    frac = max(0.0, float(pct)) / 100.0
+    return (int(round(frac * max(1.0, abs(x2 - x1)))), int(round(frac * max(1.0, abs(y2 - y1)))))
+
+
+def adjust_box(box, deltas: dict, size, pct: float = BOX_ADJUST_MAX_PCT) -> list:
+    """Apply signed per-side pixel deltas (+ expands outward, - shrinks inward).
+
+    Each delta is clamped to its cap, the result to the image; a degenerate result
+    keeps the original box.
+    """
+    cap_x, cap_y = box_adjust_caps(box, pct)
+    d = {}
+    for k, cap in (("x1", cap_x), ("x2", cap_x), ("y1", cap_y), ("y2", cap_y)):
+        try:
+            v = float(deltas.get(k, 0) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        d[k] = max(-cap, min(cap, v))
+    W, H = size
+    x1, y1, x2, y2 = (float(v) for v in box)
+    nx1, ny1 = max(0.0, x1 - d["x1"]), max(0.0, y1 - d["y1"])
+    nx2, ny2 = min(float(W), x2 + d["x2"]), min(float(H), y2 + d["y2"])
+    if nx2 - nx1 < 1 or ny2 - ny1 < 1:
+        return [x1, y1, x2, y2]
+    return [nx1, ny1, nx2, ny2]
+
+
 def box_roi(box, size) -> np.ndarray:
     W, H = size
     x1, y1, x2, y2 = (float(v) for v in box)
@@ -320,17 +353,38 @@ def _draw_capsule(mask: np.ndarray, y0, x0, y1, x1, radius: int) -> None:
         mask[y_lo:y_hi, x_lo:x_hi] |= (yy - yi) ** 2 + (xx - xi) ** 2 <= rr * rr
 
 
-def bridge_positive_islands(mask: np.ndarray, box, positive_region: np.ndarray) -> np.ndarray:
-    """Join islands created by this pass's positives to the largest blob with a thin corridor."""
+def topology_components(topology) -> int:
+    """Connected pieces from a stage-1 topology dict (1 when absent or unreadable)."""
+    try:
+        return max(1, int((topology or {}).get("components", 1) or 1))
+    except (TypeError, ValueError, AttributeError):
+        return 1
+
+
+def topology_holes(topology) -> int:
+    """Interior holes from a stage-1 topology dict (0 when absent or unreadable)."""
+    try:
+        return max(0, int((topology or {}).get("holes", 0) or 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def bridge_positive_islands(mask: np.ndarray, box, positive_region: np.ndarray,
+                            topology=None) -> np.ndarray:
+    """Join islands created by this pass's positives to the largest blob(s) with a thin corridor.
+
+    The ``topology.components`` largest blobs are the anchors (one without topology).
+    """
     mask = np.asarray(mask, dtype=bool).copy()
     if not positive_region.any() or not mask.any():
         return mask
+    keep_n = topology_components(topology)
     labeled, nlab = ndi.label(mask)
-    if nlab <= 1:
+    if nlab <= keep_n:
         return mask
     areas = ndi.sum(mask, labeled, index=np.arange(1, nlab + 1))
-    anchor_label = int(np.argsort(areas)[::-1][0] + 1)
-    anchors = labeled == anchor_label
+    anchor_labels = {int(i + 1) for i in np.argsort(areas)[::-1][:keep_n]}
+    anchors = np.isin(labeled, list(anchor_labels))
     max_dist = BRIDGE_MAX_DIST_PCT / 100.0 * _box_min_dim(box)
     half_w = max(1, max(3, 2 * _morph_radius(box, POSTPROC_OPEN_PCT) + 3) // 2)
 
@@ -344,7 +398,7 @@ def bridge_positive_islands(mask: np.ndarray, box, positive_region: np.ndarray) 
     tree = cKDTree(np.column_stack([ay, ax]))
 
     for lab in range(1, nlab + 1):
-        if lab == anchor_label:
+        if lab in anchor_labels:
             continue
         comp = labeled == lab
         if not (comp & positive_region).any():
@@ -381,17 +435,22 @@ def _remove_small_objects(mask, min_size: int):
     return morphology.remove_small_objects(mask, min_size=min_size)
 
 
-def postprocess_mask(mask: np.ndarray, box) -> np.ndarray:
-    """Minor closing + opening, then fill small holes and drop small specks."""
+def postprocess_mask(mask: np.ndarray, box, topology=None) -> np.ndarray:
+    """Minor closing + opening, then fill small holes and drop small specks.
+
+    With a stage-1 topology (``--topology``), hole filling only runs when it reports
+    no holes and speck removal only when it reports a single component.
+    """
     mask = np.asarray(mask, dtype=bool)
     obj = int(mask.sum())
     r_close = max(1, _morph_radius(box, POSTPROC_CLOSE_PCT))
     r_open = max(1, _morph_radius(box, POSTPROC_OPEN_PCT))
     mask = np.asarray(_CLOSING(mask, morphology.disk(r_close)), dtype=bool)
     mask = np.asarray(_OPENING(mask, morphology.disk(r_open)), dtype=bool)
-    if obj > 0:
+    if obj > 0 and topology_holes(topology) == 0:
         hole_cap = max(POSTPROC_HOLE_FLOOR, int(round(POSTPROC_HOLE_PCT / 100.0 * obj)))
         mask = np.asarray(_remove_small_holes(mask, hole_cap), dtype=bool)
+    if obj > 0 and topology_components(topology) <= 1:
         speck_cap = max(POSTPROC_SPECK_FLOOR, int(round(POSTPROC_SPECK_PCT / 100.0 * obj)))
         mask = np.asarray(_remove_small_objects(mask, speck_cap), dtype=bool)
     return mask

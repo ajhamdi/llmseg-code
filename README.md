@@ -124,7 +124,32 @@ python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.7-fla
 | `--iterations` | `8` | refinement budget T; `0` stops after stage 2 ("w/o refine") |
 | `--max-instances` | `200` | instances kept per image (highest confidence first) |
 | `--timeout` | `400` | seconds per vision call |
+| `--topology` | off | topology conditioning (see [design switches](#design-switches)) |
+| `--refine-box` | off | detect-box adjustment pre-pass, +1 call |
+| `--no-postprocess` | off | skip the per-pass morphological cleanup |
 | `--out-dir` | `output/<image stem>` | where records and images are written |
+
+<a id="design-switches"></a>
+**Design switches.** The defaults are the paper's main-results configuration. Together with
+`--iterations`, three switches select the design alternatives studied in the paper's ablations:
+
+* `--topology`: stage 1 also reports each instance's topology (connected components, holes),
+  stage 2 fits one loop per component and one per hole, and the per-pass cleanup fills small holes
+  only when topology reports none and drops specks only when it reports one component. The
+  ablation study's reference configuration is `--topology --iterations 12`; the main results leave
+  topology off.
+* `--refine-box`: before the first refinement pass, one call shifts each instance box by signed
+  per-side deltas (capped at 20% of the box width / height); all later refinement is confined to
+  the adjusted box. Adds one call, so the call bound becomes 2T + 3.
+* `--no-postprocess`: compose each pass's refinements without the deterministic closing /
+  opening / hole and speck cleanup.
+
+```bash
+python pipeline.py data/toy/donut.jpeg "the donut" --topology --iterations 12   # ablation reference
+python pipeline.py data/toy/taxis.jpeg "the taxi" --refine-box --no-postprocess
+```
+
+The switches in effect are stored under `config` in `detect.json`, `seg.json` and `recseg.json`.
 
 Outputs in `--out-dir`:
 
@@ -132,7 +157,8 @@ Outputs in `--out-dir`:
 |---|---|
 | `detect.json` | stage 1: instance boxes (pixels, `[x1, y1, x2, y2]`), labels, confidences, morphology |
 | `seg.json`, `seg.png`, `seg_mask.png` | stage 2: per-instance B-splines, overlay, binary mask |
-| `recseg_iter<k>.png`, `recseg_iter<k>_post.png` | overlay after pass k (the `_post` image is what the model critiques in pass k + 1) |
+| `seg_box.png` | with `--refine-box`, when a box moved: the stage-2 overlay with the adjusted boxes (critiqued in pass 1) |
+| `recseg_iter<k>.png`, `recseg_iter<k>_post.png` | overlay after pass k (the `_post` image is what the model critiques in pass k + 1; absent with `--no-postprocess`) |
 | `recseg.json`, `recseg.png`, `rec_mask.png` | stage 3: every pass's refinements and residual, final overlay, **final binary mask** |
 | `instances.json` | per instance: label, confidence, box, stage-2 and final mask (COCO RLE) |
 
@@ -149,6 +175,7 @@ The 16 development images (one query each) are in `data/toy/`:
 ./run_toy.sh claude-sonnet-5-5             # Anthropic
 ./run_toy.sh gpt-5.6-terra                 # OpenAI
 ITERATIONS=0 ./run_toy.sh                  # stage 2 only
+./run_toy.sh gemini-3.7-flash --topology   # further arguments go to pipeline.py
 ```
 
 Results land in `output/toy/<model>/<image>/` (final mask `rec_mask.png`, log `run.log`).
@@ -236,6 +263,7 @@ Options shared by every harness:
 |---|---|---|
 | `--model`, `--provider` | as for `pipeline.py` | vision backend |
 | `--iterations` | `8` | refinement budget T (`0` = stage 2 only) |
+| `--topology`, `--refine-box`, `--no-postprocess` | off | forwarded to `pipeline.py` ([design switches](#design-switches)) |
 | `--n` | `0` (all) | number of items |
 | `--shuffle`, `--seed` | off, `0` | seeded shuffle before taking `--n` (the paper's sampled subsets) |
 | `--parallel` | `1` | items in flight (mind your provider's rate limits) |
@@ -245,7 +273,8 @@ Options shared by every harness:
 | `--out` | `results/<benchmark>/<model>/<split>[__<config>]` | output directory |
 
 Runs are **checkpointed per item**: re-running the same command resumes. A larger `--n` extends the
-same run. A non-default `--iterations`, `--shuffle` or `--negatives` gets its own directory, so two
+same run. A non-default `--iterations`, `--shuffle`, `--negatives` or design switch gets its own
+directory (e.g. `val__it12__topo`), so two
 configurations never mix. A run stops cleanly (without caching the item) on a billing, auth or daily
 quota error; fix the account and re-run to resume. Pipeline failures are recorded and scored on
 whatever mask they produced (usually empty).
@@ -343,7 +372,9 @@ Fixed configuration of the main results:
 | stage-2 curve degree | chosen by the model, d ∈ {1, 3} | `prompts.PROMPT_SEGMENT` |
 | refinement curve degree | 3 | `pipeline.focus_splines` |
 | soft-lock erosion per opposing edit | 0.5 | `geometry.REFINE_LOCK_ALPHA` |
-| topology descriptor | off on all three stages | prompts carry no topology block |
+| topology descriptor | off on all three stages | `--topology` turns it on |
+| detect-box adjustment pre-pass | off | `--refine-box` |
+| per-pass morphological cleanup | on | `--no-postprocess` turns it off |
 
 ## Citation
 

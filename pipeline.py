@@ -6,12 +6,20 @@
     stage 3  refine   overlay of the mask    -> focus boxes -> +/- B-splines -> mask
                       (up to T passes, early stop on a small mask residual)
 
+The defaults are the paper's main-results configuration. Three switches select the
+design alternatives studied in the paper's ablations:
+    --topology        stage-1 topology (components / holes) conditions stage 2 and
+                      gates the stage-3 cleanup (the ablation reference setting)
+    --refine-box      one signed per-side detect-box adjustment before refinement
+    --no-postprocess  skip the deterministic per-pass morphological cleanup
+
 Usage:
     python pipeline.py data/toy/cat.jpg "the cat" --out-dir output/cat
     python pipeline.py data/toy/taxis.jpeg "the taxi" --model gemini-3.7-flash --iterations 8
     python pipeline.py data/toy/dog.jpeg "the dog" --model claude-sonnet-5-5
     python pipeline.py data/toy/car.jpg "the car" --model gpt-5.6-terra
     python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.7-flash   # OpenRouter
+    python pipeline.py data/toy/donut.jpeg "the donut" --topology --iterations 12
 
 Every stage writes a JSON record plus overlay / mask PNGs into ``--out-dir``.
 The final mask is ``rec_mask.png`` (``seg_mask.png`` is the stage-2 mask);
@@ -108,8 +116,13 @@ def parse_batched_reply(text: str, what: str) -> dict:
         return payload
 
 
-def format_instances(instances: list, model: str, size, include_morphology: bool) -> str:
-    """Instance lines for a prompt, each with its box restated as explicit bounds."""
+def format_instances(instances: list, model: str, size, include_morphology: bool,
+                     include_topology: bool = False, include_caps: bool = False) -> str:
+    """Instance lines for a prompt, each with its box restated as explicit bounds.
+
+    ``include_topology`` adds the stage-1 topology (``--topology``); ``include_caps``
+    adds the per-side delta caps of the box-adjust pre-pass (``--refine-box``).
+    """
     W, H = size
     lines = []
     for inst in instances:
@@ -120,6 +133,14 @@ def format_instances(instances: list, model: str, size, include_morphology: bool
                      f'{mx1} <= x <= {mx2}  and  {my1} <= y <= {my2}')
         if include_morphology:
             lines.append(f'    morphology: {json.dumps(inst.get("morphology", "n/a"))}')
+        if include_topology:
+            lines.append(f'    topology:   {json.dumps(inst.get("topology") or "n/a")}')
+        if include_caps:
+            cap_x, cap_y = G.box_adjust_caps(inst["box"])
+            lines.append(f'    box_w={round(abs(mx2 - mx1))}, box_h={round(abs(my2 - my1))}; '
+                         f'side-delta caps: |x1|/|x2| <= {round(llm.to_model_len(cap_x, model, W))}, '
+                         f'|y1|/|y2| <= {round(llm.to_model_len(cap_y, model, H))} '
+                         f'(signed: + expands outward, - shrinks inward)')
     return "\n".join(lines)
 
 
@@ -182,7 +203,7 @@ def _reading_order(d):
         return (0.0, 0.0)
 
 
-def stage_detect(image: Path, query: str, model: str, size) -> list:
+def stage_detect(image: Path, query: str, model: str, size, topology: bool = False) -> list:
     W, H = size
     prompt = P.PROMPT_DETECT.format(
         image_path=str(image.resolve()),
@@ -191,8 +212,13 @@ def stage_detect(image: Path, query: str, model: str, size) -> list:
         box_order=llm.box_order_literal(model),
         box_format=llm.box_format_instructions(model),
         query=query,
+        topology_schema=P.topology_schema(topology),
+        form_note=P.form_note(topology),
     )
     dets = parse_detections(llm.query(prompt, image, model, "detections"))
+    if not topology:   # never let an unrequested topology gate the cleanup later
+        for det in dets:
+            det.pop("topology", None)
     llm.normalize_boxes(dets, model, W, H)
 
     kept: list = []
@@ -220,11 +246,12 @@ def select_instances(detections: list, max_instances: int = MAX_INSTANCES) -> li
     dets = sorted(dets, key=_confidence, reverse=True)[:max_instances]
     dets = sorted(dets, key=_reading_order)
     return [{"id": i, "label": d.get("label", "object"), "box": [float(v) for v in d["box"]],
-             "morphology": d.get("morphology"), "confidence": d.get("confidence")}
+             "morphology": d.get("morphology"), "topology": d.get("topology"),
+             "confidence": d.get("confidence")}
             for i, d in enumerate(dets)]
 
 
-def stage_segment(image: Path, instances: list, model: str, size):
+def stage_segment(image: Path, instances: list, model: str, size, topology: bool = False):
     """One call traces every instance. Returns (instances with splines, degree, color name)."""
     W, H = size
     label = merged_label(instances)
@@ -233,10 +260,12 @@ def stage_segment(image: Path, instances: list, model: str, size):
         coord_space=llm.coord_space_instructions(model, W, H),
         label=label,
         n_instances=len(instances),
-        instances_block=format_instances(instances, model, size, include_morphology=True),
+        instances_block=format_instances(instances, model, size, include_morphology=True,
+                                         include_topology=topology),
         box_field=llm.box_field_name(model),
         box_order=llm.box_order_literal(model),
         point_order_note=llm.point_order_note(model),
+        loops_note=P.loops_note(topology),
         color_scope_note=P.color_scope_note(len(instances)),
         output_budget_note=P.output_budget_note(len(instances), "instances"),
         degree_guidance=P.segment_degree_guidance(),
@@ -275,6 +304,48 @@ def stage_segment(image: Path, instances: list, model: str, size):
 # --------------------------------------------------------------------------- #
 # Stage 3: refine                                                             #
 # --------------------------------------------------------------------------- #
+def adjust_boxes(overlay: Path, label: str, instances: list, model: str, size, color: str) -> list:
+    """3-pre (--refine-box): one call, signed per-side deltas per instance -> adjusted boxes.
+
+    Sets ``box`` (adjusted) and ``original_box`` on every instance and returns one
+    record per instance. An unparseable reply leaves every box unchanged.
+    """
+    W, H = size
+    prompt = P.PROMPT_BOX_ADJUST.format(
+        overlay_path=str(overlay.resolve()),
+        label=label,
+        coord_space=llm.coord_space_instructions(model, W, H),
+        instances_block=format_instances(instances, model, size, include_morphology=False,
+                                         include_caps=True),
+        mask_color=color,
+    )
+    try:
+        reply = llm.extract_json(llm.query(prompt, overlay, model, "box adjust"))
+    except ValueError as e:
+        log(f"[refine] box adjust: unparseable reply ({e}); boxes unchanged")
+        reply = {}
+    entries = reply.get("instances", []) if isinstance(reply, dict) else []
+    by_id = {}
+    for entry in entries:
+        if isinstance(entry, dict):
+            try:
+                by_id.setdefault(int(entry.get("id")), entry)
+            except (TypeError, ValueError):
+                continue
+    adjusted = []
+    for inst in instances:
+        deltas = llm.deltas_to_pixels(by_id.get(inst["id"], {}), model, W, H)
+        inst["original_box"] = list(inst["box"])
+        inst["box"] = G.adjust_box(inst["box"], deltas, size)
+        changed = [round(v) for v in inst["box"]] != [round(v) for v in inst["original_box"]]
+        log(f"[refine] box adjust id={inst['id']}: "
+            + (f"{[round(v) for v in inst['original_box']]} -> {[round(v) for v in inst['box']]}"
+               if changed else "unchanged"))
+        adjusted.append({"id": inst["id"], "deltas_px": {k: round(v, 1) for k, v in deltas.items()},
+                         "box_before": inst["original_box"], "box_after": list(inst["box"])})
+    return adjusted
+
+
 def focus_boxes(overlay: Path, label: str, instances: list, model: str, size, color: str) -> list:
     """3a: typed (positive / negative) focus boxes on the current overlay."""
     W, H = size
@@ -330,22 +401,31 @@ def focus_splines(overlay: Path, label: str, pending: list, model: str, size, co
 
 
 def stage_refine(image: Path, instances: list, model: str, size, color: str,
-                 seg_overlay: Path, out: Path, iterations: int, record: dict) -> dict:
-    """Up to ``iterations`` passes of 3a -> effect gate -> 3b -> compose -> postprocess."""
+                 seg_overlay: Path, out: Path, iterations: int, record: dict,
+                 refine_box: bool = False, postprocess: bool = True) -> dict:
+    """[3-pre box adjust], then up to ``iterations`` passes of
+    3a -> effect gate -> 3b -> compose -> postprocess."""
     W, H = size
     rgb = P.MASK_COLORS[color]
     label = merged_label(instances)
-    boxes = [inst["box"] for inst in instances]
     ids = [inst["id"] for inst in instances]
     for inst in instances:
         inst["mask"] = G.mask_from_splines(inst["splines"], inst["box"], size)
         inst["lock"] = np.zeros((H, W), dtype=np.float32)
     by_inst = {inst["id"]: inst for inst in instances}
     union = lambda: G.union_masks([inst["mask"] for inst in instances], size)  # noqa: E731
-    denom = G.box_union_area_px(boxes, size) or (W * H)
 
     overlay, quiet_streak = seg_overlay, 0
     record.update(passes=[], iterations=0, converged=False, complete=False)
+    if refine_box:
+        record["box_adjust"] = adjust_boxes(overlay, label, instances, model, size, color)
+        if any(a["box_before"] != a["box_after"] for a in record["box_adjust"]):
+            overlay = out / "seg_box.png"
+            G.render_overlay(image, union(), overlay, rgb,
+                             boxes=[inst["box"] for inst in instances], ids=ids)
+    # Focus boxes, splines and the residual all live in the (possibly adjusted) boxes.
+    boxes = [inst["box"] for inst in instances]
+    denom = G.box_union_area_px(boxes, size) or (W * H)
     for it in range(1, iterations + 1):
         before = union()
         try:
@@ -391,14 +471,16 @@ def stage_refine(image: Path, instances: list, model: str, size, color: str,
                 inst = by_inst[iid]
                 inst["mask"], inst["lock"], pos = G.apply_locked_refinements(
                     inst["mask"], inst["lock"], refs, size)
-                inst["mask"] = G.bridge_positive_islands(inst["mask"], inst["box"], pos)
+                inst["mask"] = G.bridge_positive_islands(inst["mask"], inst["box"], pos,
+                                                         inst.get("topology"))
 
         overlay = out / f"recseg_iter{it}.png"
         G.render_overlay(image, union(), overlay, rgb, boxes=boxes, ids=ids)
-        for inst in instances:
-            inst["mask"] = G.postprocess_mask(inst["mask"], inst["box"])
-        overlay = out / f"recseg_iter{it}_post.png"
-        G.render_overlay(image, union(), overlay, rgb, boxes=boxes, ids=ids)
+        if postprocess:
+            for inst in instances:
+                inst["mask"] = G.postprocess_mask(inst["mask"], inst["box"], inst.get("topology"))
+            overlay = out / f"recseg_iter{it}_post.png"
+            G.render_overlay(image, union(), overlay, rgb, boxes=boxes, ids=ids)
 
         residual = float(np.logical_xor(before, union()).sum()) / float(denom)
         quiet = (not kept) or residual < CONVERGE_EPS
@@ -432,19 +514,22 @@ def _write_instances(path: Path, instances: list, seg_masks: list, rec_masks: li
 
 
 def run(image: Path, query: str, model: str, out: Path, iterations: int,
-        max_instances: int = MAX_INSTANCES) -> int:
+        max_instances: int = MAX_INSTANCES, topology: bool = False,
+        refine_box: bool = False, postprocess: bool = True) -> int:
     out.mkdir(parents=True, exist_ok=True)
     with Image.open(image) as im:
         size = im.size
     W, H = size
     empty = np.zeros((H, W), dtype=bool)
     try:
-        detections = stage_detect(image, query, model, size)
+        detections = stage_detect(image, query, model, size, topology)
     except (TimeoutError, RuntimeError, ValueError) as e:
         log(f"[detect] error: {e}")
         return 1
+    config = {"topology": topology, "refine_box": refine_box, "postprocess": postprocess,
+              "iterations": iterations, "max_instances": max_instances}
     _write(out / "detect.json", {"query": query, "model": model, "width": W, "height": H,
-                                 "detections": detections})
+                                 "config": config, "detections": detections})
     if not detections:
         for name in ("seg_mask.png", "rec_mask.png"):
             Image.fromarray(empty.astype(np.uint8)).save(out / name)
@@ -454,7 +539,7 @@ def run(image: Path, query: str, model: str, out: Path, iterations: int,
 
     instances = select_instances(detections, max_instances)
     try:
-        instances, degree, color = stage_segment(image, instances, model, size)
+        instances, degree, color = stage_segment(image, instances, model, size, topology)
     except (TimeoutError, RuntimeError, ValueError) as e:
         log(f"[segment] error: {e}")
         return 1
@@ -469,9 +554,11 @@ def run(image: Path, query: str, model: str, out: Path, iterations: int,
                      boxes=[inst["box"] for inst in instances], ids=[inst["id"] for inst in instances],
                      instance_masks=per_masks if len(per_masks) > 1 else None,
                      palette_colors=list(P.MASK_COLORS.values()), mask_out=out / "seg_mask.png")
-    record = {"query": query, "model": model, "width": W, "height": H, "degree": degree,
-              "mask_color": color, "coverage_pct": round(100.0 * float(seg_mask.mean()), 2),
-              "instances": [{k: inst[k] for k in ("id", "label", "box", "morphology", "splines")}
+    record = {"query": query, "model": model, "width": W, "height": H, "config": config,
+              "degree": degree, "mask_color": color,
+              "coverage_pct": round(100.0 * float(seg_mask.mean()), 2),
+              "instances": [{k: inst[k] for k in ("id", "label", "box", "morphology", "topology",
+                                                  "splines")}
                             for inst in instances]}
     _write(out / "seg.json", record)
     if iterations < 1:
@@ -480,7 +567,7 @@ def run(image: Path, query: str, model: str, out: Path, iterations: int,
 
     try:
         record = stage_refine(image, instances, model, size, color, seg_overlay, out,
-                              iterations, record)
+                              iterations, record, refine_box=refine_box, postprocess=postprocess)
     except (TimeoutError, RuntimeError) as e:
         log(f"[refine] aborted, keeping the passes completed so far: {e}")
     final = G.union_masks([inst["mask"] for inst in instances], size)
@@ -512,6 +599,17 @@ def main() -> int:
                     help=f"seconds per vision call (default: {llm.DEFAULT_TIMEOUT})")
     ap.add_argument("--max-instances", type=int, default=MAX_INSTANCES,
                     help=f"instances kept per image, highest confidence first (default: {MAX_INSTANCES})")
+    ap.add_argument("--topology", action="store_true",
+                    help="topology conditioning: stage 1 also reports components / holes, stage 2 "
+                         "fits one loop per component and hole, and the per-pass cleanup only fills "
+                         "holes / drops specks when topology allows it (default: off; the paper's "
+                         "ablation reference uses it)")
+    ap.add_argument("--refine-box", action="store_true",
+                    help="before refinement, one call adjusts every instance box by signed per-side "
+                         f"deltas capped at {G.BOX_ADJUST_MAX_PCT:g}%% of its width / height "
+                         "(+1 call; default: off)")
+    ap.add_argument("--no-postprocess", action="store_true",
+                    help="skip the deterministic per-pass morphological cleanup (default: on)")
     ap.add_argument("--out-dir", help="output directory (default: output/<image stem>)")
     args = ap.parse_args()
     image = Path(args.image)
@@ -525,7 +623,9 @@ def main() -> int:
         return 2
     llm.configure(provider=provider, timeout=args.timeout)
     out = Path(args.out_dir) if args.out_dir else Path("output") / image.stem
-    return run(image, args.query, model, out, args.iterations, args.max_instances)
+    return run(image, args.query, model, out, args.iterations, args.max_instances,
+               topology=args.topology, refine_box=args.refine_box,
+               postprocess=not args.no_postprocess)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ The pipeline is run as a subprocess of ``pipeline.py`` (the same command line a
 user runs on one image), so every benchmark measures exactly the released code:
 
     python pipeline.py <image> <query> --model M --provider P --iterations T --out-dir <work>
+                       [--topology] [--refine-box] [--no-postprocess]
 
 Each item is scored on BOTH masks the pipeline writes: ``seg_mask.png`` (stage 2,
 before refinement; metric prefix ``seg_``) and ``rec_mask.png`` (final, after
@@ -58,6 +59,12 @@ def add_common_args(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
                     help="API to call; auto infers it from --model (see llm.py)")
     ap.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS,
                     help=f"refinement passes T (default {DEFAULT_ITERATIONS}); 0 scores the stage-2 mask")
+    ap.add_argument("--topology", action="store_true",
+                    help="pipeline.py --topology (topology conditioning; the ablation reference)")
+    ap.add_argument("--refine-box", action="store_true",
+                    help="pipeline.py --refine-box (detect-box adjustment pre-pass)")
+    ap.add_argument("--no-postprocess", action="store_true",
+                    help="pipeline.py --no-postprocess (skip the per-pass morphological cleanup)")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="seconds per vision call")
     ap.add_argument("--n", type=int, default=0, help="number of items (0 = all)")
     ap.add_argument("--shuffle", action="store_true",
@@ -102,6 +109,9 @@ def config_tag(args, extra_parts=()) -> str:
     parts = [p for p in extra_parts if p]
     if args.iterations != DEFAULT_ITERATIONS:
         parts.append(f"it{args.iterations}")
+    for flag, part in (("topology", "topo"), ("refine_box", "boxadj"), ("no_postprocess", "nopost")):
+        if getattr(args, flag, False):
+            parts.append(part)
     if args.shuffle:
         parts.append(f"shuf{args.seed}")
     return "__".join(parts)
@@ -131,6 +141,12 @@ def require(path: Path, hint: str) -> Path:
 # --------------------------------------------------------------------------- #
 # Running the pipeline                                                        #
 # --------------------------------------------------------------------------- #
+def pipeline_flags(args) -> list:
+    """The design-choice switches forwarded to pipeline.py."""
+    return [f for f, on in (("--topology", args.topology), ("--refine-box", args.refine_box),
+                            ("--no-postprocess", args.no_postprocess)) if on]
+
+
 def run_pipeline(work: Path, img: Path, query: str, args, extra=()) -> dict:
     """detect -> segment -> refine for one (image, query). Never raises.
 
@@ -139,8 +155,8 @@ def run_pipeline(work: Path, img: Path, query: str, args, extra=()) -> dict:
     """
     cmd = [sys.executable, str(PIPELINE), str(img), query, "--model", args.model,
            "--provider", args.provider, "--iterations", str(args.iterations),
-           "--timeout", str(args.timeout), "--out-dir", str(work), *extra]
-    cap = (2 * args.iterations + 2) * args.timeout + 120
+           "--timeout", str(args.timeout), "--out-dir", str(work), *pipeline_flags(args), *extra]
+    cap = (2 * args.iterations + 2 + int(args.refine_box)) * args.timeout + 120
     t0 = time.time()
     try:
         r = subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True, timeout=cap)
@@ -364,6 +380,8 @@ def run_benchmark(items, process, out: Path, args, summarize, bench: str, split:
     def write(final=False):
         summ = {"benchmark": f"{bench}/{split}", "model": args.model, "provider": args.provider,
                 "iterations": args.iterations, "timeout": args.timeout,
+                "topology": args.topology, "refine_box": args.refine_box,
+                "postprocess": not args.no_postprocess,
                 "n_items_selected": len(items), "n_records": len(records),
                 "n_failed": sum(1 for r in records if r.get("status") == "failed")}
         summ.update(provenance or {})

@@ -7,11 +7,14 @@
 #   ./run_toy.sh claude-sonnet-5-5             # Anthropic API   (ANTHROPIC_API_KEY)
 #   ./run_toy.sh gpt-5.6-terra                 # OpenAI API      (OPENAI_API_KEY)
 #   ITERATIONS=0 ./run_toy.sh                  # stop after stage 2 (no refinement)
+#   ./run_toy.sh gemini-3.7-flash --topology   # any further args go to pipeline.py
 #
 # Results land in output/toy/<model>/<image>/ (final mask: rec_mask.png, log: run.log).
 set -uo pipefail
 cd "$(dirname "$0")"
-MODEL="${1:-}"
+MODEL=""
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then MODEL="$1"; shift; fi   # optional model, then flags
+EXTRA=("$@")
 PY="${PYTHON:-python}"
 ITERATIONS="${ITERATIONS:-8}"
 SLUG="${MODEL:-default}"
@@ -45,6 +48,6 @@ for case in "${CASES[@]}"; do
   mkdir -p "${dir}"
   echo "=== ${img}: \"${query}\""
   "${PY}" pipeline.py "data/toy/${img}" "${query}" ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"} \
-      --iterations "${ITERATIONS}" --out-dir "${dir}" 2> "${dir}/run.log" \
+      --iterations "${ITERATIONS}" ${EXTRA[@]+"${EXTRA[@]}"} --out-dir "${dir}" 2> "${dir}/run.log" \
     || echo "    failed (see ${dir}/run.log)"
 done
