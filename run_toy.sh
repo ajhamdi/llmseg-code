@@ -2,12 +2,12 @@
 # Run the full pipeline (T = 8 refinement passes) on the 16 toy images.
 #
 #   ./run_toy.sh                               # default model of the first provider with a key set
-#   ./run_toy.sh gemini-3.7-flash              # Gemini API      (GEMINI_API_KEY)
-#   ./run_toy.sh google/gemini-3.7-flash       # OpenRouter      (OPENROUTER_API_KEY)
+#   ./run_toy.sh gemini-3.8-flash              # Gemini API      (GEMINI_API_KEY)
+#   ./run_toy.sh google/gemini-3.8-flash       # OpenRouter      (OPENROUTER_API_KEY)
 #   ./run_toy.sh claude-sonnet-5-5             # Anthropic API   (ANTHROPIC_API_KEY)
 #   ./run_toy.sh gpt-5.6-terra                 # OpenAI API      (OPENAI_API_KEY)
 #   ITERATIONS=0 ./run_toy.sh                  # stop after stage 2 (no refinement)
-#   ./run_toy.sh gemini-3.7-flash --topology   # any further args go to pipeline.py
+#   ./run_toy.sh gemini-3.8-flash --topology   # any further args go to pipeline.py
 #
 # Results land in output/toy/<model>/<image>/ (final mask: rec_mask.png, log: run.log).
 set -uo pipefail

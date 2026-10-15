@@ -3,8 +3,8 @@
 
 Run after ``run_apzero.py``. Writes results/<collection>/AP0_<model>_<stage>.json.
 
-    python evals/score_apzero.py --collection odinw --model gemini-3.7-flash
-    python evals/score_apzero.py --collection rf100vl --model gemini-3.7-flash --stage seg
+    python evals/score_apzero.py --collection odinw --model gemini-3.8-flash
+    python evals/score_apzero.py --collection rf100vl --model gemini-3.8-flash --stage seg
 """
 from __future__ import annotations
 

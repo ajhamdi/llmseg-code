@@ -4,10 +4,10 @@ One call shape for every stage: one text prompt + one image in, reply text out.
 The provider underneath is picked by ``resolve_provider``:
 
     provider     API key env var                    example --model
-    gemini       GEMINI_API_KEY (or GOOGLE_API_KEY) gemini-3.7-flash
+    gemini       GEMINI_API_KEY (or GOOGLE_API_KEY) gemini-3.8-flash
     anthropic    ANTHROPIC_API_KEY                  claude-sonnet-5-5
     openai       OPENAI_API_KEY                     gpt-5.6-terra
-    openrouter   OPENROUTER_API_KEY                 google/gemini-3.7-flash
+    openrouter   OPENROUTER_API_KEY                 google/gemini-3.8-flash
 
 ``--provider auto`` (the default) infers it from the model name: a slug with a
 ``/`` goes to OpenRouter, ``gemini-*`` / ``gemma-*`` to the Gemini API,
@@ -60,10 +60,10 @@ KEY_ENV = {
     "openrouter": ("OPENROUTER_API_KEY",),
 }
 # Default model per provider, used when --model is omitted. The paper's main
-# results use Gemini-3.7-Flash (native Gemini API, or the same model via OpenRouter).
+# results use Gemini-3.7-Flash; pass --model gemini-3.7-flash to match them.
 DEFAULT_MODELS = {
-    "gemini": "gemini-3.7-flash",
-    "openrouter": "google/gemini-3.7-flash",
+    "gemini": "gemini-3.8-flash",
+    "openrouter": "google/gemini-3.8-flash",
     "openai": "gpt-5.6-terra",
     "anthropic": "claude-sonnet-5-5",
 }

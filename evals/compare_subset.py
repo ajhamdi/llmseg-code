@@ -11,7 +11,7 @@ runs used the same ``--negatives`` and ``--seed``.
 Every metric is recomputed from the per-item fields of ``results.jsonl`` (no
 masks needed); with ``--ann`` box / mask AP is also re-scored on the shared items.
 
-    python evals/compare_subset.py --a results/reasonseg/gemini-3.7-flash/val \\
+    python evals/compare_subset.py --a results/reasonseg/gemini-3.8-flash/val \\
                                    --b results/reasonseg/claude-sonnet-5-5/val
     python evals/compare_subset.py --a <lvis run A> --b <lvis run B> --ann data/benchmarks/lvis/lvis_v1_val.json
 """

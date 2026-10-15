@@ -15,10 +15,10 @@ design alternatives studied in the paper's ablations:
 
 Usage:
     python pipeline.py data/toy/cat.jpg "the cat" --out-dir output/cat
-    python pipeline.py data/toy/taxis.jpeg "the taxi" --model gemini-3.7-flash --iterations 8
+    python pipeline.py data/toy/taxis.jpeg "the taxi" --model gemini-3.8-flash --iterations 8
     python pipeline.py data/toy/dog.jpeg "the dog" --model claude-sonnet-5-5
     python pipeline.py data/toy/car.jpg "the car" --model gpt-5.6-terra
-    python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.7-flash   # OpenRouter
+    python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.8-flash   # OpenRouter
     python pipeline.py data/toy/donut.jpeg "the donut" --topology --iterations 12
 
 Every stage writes a JSON record plus overlay / mask PNGs into ``--out-dir``:

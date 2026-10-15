@@ -19,10 +19,6 @@ training, no segmentation head and no mask decoder**. The model is only ever ask
 coordinates (boxes and B-spline control points) as JSON; everything else (parsing, box
 confinement, rasterization, mask composition, stopping) is deterministic code.
 
-With Gemini-3.7-Flash as the backend, LLMSeg is competitive with, and often surpasses, the
-specialist SAM 3 model on identical items across eleven benchmarks, reaching **71.5 cIoU on
-ReasonSeg val**. Swapping in a newer backend model improves accuracy without retraining anything.
-
 This repository contains the full method, the 16 toy images used during development, and the
 complete evaluation harness for every benchmark in the paper. Every component runs with an API key
 from **any one** of Google Gemini, Anthropic, OpenAI or OpenRouter.
@@ -36,7 +32,6 @@ from **any one** of Google Gemini, Anthropic, OpenAI or OpenRouter.
 - [Quick start: segment an image](#quick-start-segment-an-image)
 - [Toy examples](#toy-examples)
 - [Evaluation](#evaluation)
-- [Main results](#main-results)
 - [Citation](#citation)
 
 ---
@@ -62,8 +57,8 @@ You need **one** key. Put it in a `.env` file (copy `.env.example`) or export it
 
 | provider | environment variable | example `--model` |
 |---|---|---|
-| Google Gemini API | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-3.7-flash` (paper), `gemma-4-31b-it` |
-| OpenRouter | `OPENROUTER_API_KEY` | `google/gemini-3.7-flash`, `qwen/qwen3-vl-235b-a22b-instruct` |
+| Google Gemini API | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-3.8-flash`, `gemma-4-31b-it` |
+| OpenRouter | `OPENROUTER_API_KEY` | `google/gemini-3.8-flash`, `qwen/qwen3-vl-235b-a22b-instruct` |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-5-5`, `claude-opus-5-5` |
 | OpenAI | `OPENAI_API_KEY` | `gpt-5.6-terra` |
 
@@ -82,10 +77,10 @@ all replies are converted to absolute pixels before any other code sees them.
 
 ```bash
 python pipeline.py data/toy/cat.jpg "the cat" --out-dir output/cat
-python pipeline.py data/toy/taxis.jpeg "the taxi" --model gemini-3.7-flash
+python pipeline.py data/toy/taxis.jpeg "the taxi" --model gemini-3.8-flash
 python pipeline.py data/toy/dog.jpeg "the dog" --model claude-sonnet-5-5
 python pipeline.py data/toy/car.jpg "the car" --model gpt-5.6-terra
-python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.7-flash   # OpenRouter
+python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.8-flash   # OpenRouter
 ```
 
 The final mask is written to `<out-dir>/rec_mask.png` (default `output/<image stem>/`), alongside
@@ -100,12 +95,12 @@ The 16 development images (one query each) are in `data/toy/`:
 
 ```bash
 ./run_toy.sh                               # default model of the first provider with a key
-./run_toy.sh gemini-3.7-flash              # Gemini API
-./run_toy.sh google/gemini-3.7-flash       # OpenRouter
+./run_toy.sh gemini-3.8-flash              # Gemini API
+./run_toy.sh google/gemini-3.8-flash       # OpenRouter
 ./run_toy.sh claude-sonnet-5-5             # Anthropic
 ./run_toy.sh gpt-5.6-terra                 # OpenAI
 ITERATIONS=0 ./run_toy.sh                  # stage 2 only
-./run_toy.sh gemini-3.7-flash --topology   # further arguments go to pipeline.py
+./run_toy.sh gemini-3.8-flash --topology   # further arguments go to pipeline.py
 ```
 
 Results land in `output/toy/<model>/<image>/` (final mask `rec_mask.png`, log `run.log`).
@@ -135,30 +130,13 @@ not redistributed; download scripts are in `scripts/` (e.g.
 ```bash
 pip install -r requirements-evals.txt
 bash scripts/download_benchmarks.sh reasonseg
-python evals/run_reasonseg.py --split val --model gemini-3.7-flash
-MODEL=gemini-3.7-flash bash scripts/reproduce_paper.sh     # every benchmark, paper item selection
+python evals/run_reasonseg.py --split val --model gemini-3.8-flash
+MODEL=gemini-3.8-flash bash scripts/reproduce_paper.sh     # every benchmark, paper item selection
 ```
 
 See [EVALUATION.md](EVALUATION.md) for the downloads of every benchmark, all harness commands and
-options, the metrics and the full reproduction protocol.
-
-## Main results
-
-LLMSeg with Gemini-3.7-Flash (T = 8). Full tables, baselines and ablations are in the paper.
-
-| benchmark | metric | LLMSeg (w/o refine) | **LLMSeg** | SAM 3 (same items) |
-|---|---|---|---|---|
-| ReasonSeg val / test | cIoU | 64.6 / 58.2 | **71.5 / 65.8** | 9.9 / 11.3 |
-| RefCOCO val / testA / testB | cIoU | 65.5 / 65.7 / 72.9 | **71.2 / 73.8 / 76.0** | 42.0 / 42.8 / 44.2 |
-| RefCOCO+ val / testA / testB | cIoU | 59.7 / 61.4 / 61.1 | **67.0 / 69.9 / 64.9** | 33.6 / 37.0 / 32.9 |
-| RefCOCOg val / test | cIoU | 64.8 / 69.3 | **70.9 / 74.5** | 40.0 / 39.7 |
-| LVIS | cgF1 / box AP / mask AP | 50.4 / 57.1 / 36.9 | **53.9 / 64.2 / 47.2** | 50.1 / 69.1 / 62.2 |
-| COCO | cgF1 / box AP / mask AP | 50.4 / 59.6 / 38.0 | **56.1 / 66.6 / 50.5** | 52.4 / 68.0 / 59.2 |
-| SA-Co/Gold | cgF1 / pmF1 | | 36.4 / 55.4 | 45.4 / 55.2 |
-| ADE20K | gIoU | 56.6 | **59.2** | 57.9 |
-| Cityscapes | mIoU | 48.8 | **53.3** | 63.7 |
-| ODinW13 | AP0 | 52.0 | **57.2** | 51.5 |
-| RF-100VL | AP0 | 30.4 | **31.4** | 14.2 |
+options, the metrics, the full reproduction protocol and the
+[main results](EVALUATION.md#main-results).
 
 ## Citation
 

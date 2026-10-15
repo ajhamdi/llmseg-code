@@ -85,7 +85,7 @@ whatever mask they produced (usually empty).
 To compare two runs (two models, two providers, two settings) on exactly their shared items:
 
 ```bash
-python evals/compare_subset.py --a results/reasonseg/gemini-3.7-flash/val \
+python evals/compare_subset.py --a results/reasonseg/gemini-3.8-flash/val \
                                --b results/reasonseg/claude-sonnet-5-5/val
 ```
 
@@ -127,5 +127,23 @@ This runs every benchmark with the paper's item selection (full ReasonSeg, Citys
 seeded samples of 500 per RefCOCO split, 2,500 SA-Co/Gold, 1,500 LVIS and COCO with 3 negatives per
 image, 1,000 ADE20K; the first 20 items of each RF-100VL subset), with T = 8. The selected items are
 identical to those of the paper, so results can be compared item by item.
+
+## Main results
+
+LLMSeg with Gemini-3.7-Flash (T = 8). Full tables, baselines and ablations are in the paper.
+
+| benchmark | metric | LLMSeg (w/o refine) | **LLMSeg** | SAM 3 (same items) |
+|---|---|---|---|---|
+| ReasonSeg val / test | cIoU | 64.6 / 58.2 | **71.5 / 65.8** | 9.9 / 11.3 |
+| RefCOCO val / testA / testB | cIoU | 65.5 / 65.7 / 72.9 | **71.2 / 73.8 / 76.0** | 42.0 / 42.8 / 44.2 |
+| RefCOCO+ val / testA / testB | cIoU | 59.7 / 61.4 / 61.1 | **67.0 / 69.9 / 64.9** | 33.6 / 37.0 / 32.9 |
+| RefCOCOg val / test | cIoU | 64.8 / 69.3 | **70.9 / 74.5** | 40.0 / 39.7 |
+| LVIS | cgF1 / box AP / mask AP | 50.4 / 57.1 / 36.9 | **53.9 / 64.2 / 47.2** | 50.1 / 69.1 / 62.2 |
+| COCO | cgF1 / box AP / mask AP | 50.4 / 59.6 / 38.0 | **56.1 / 66.6 / 50.5** | 52.4 / 68.0 / 59.2 |
+| SA-Co/Gold | cgF1 / pmF1 | | 36.4 / 55.4 | 45.4 / 55.2 |
+| ADE20K | gIoU | 56.6 | **59.2** | 57.9 |
+| Cityscapes | mIoU | 48.8 | **53.3** | 63.7 |
+| ODinW13 | AP0 | 52.0 | **57.2** | 51.5 |
+| RF-100VL | AP0 | 30.4 | **31.4** | 14.2 |
 
 Back to the [README](README.md).
