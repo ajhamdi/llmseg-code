@@ -21,10 +21,25 @@ Usage:
     python pipeline.py data/toy/clock.jpeg "the clock" --model google/gemini-3.7-flash   # OpenRouter
     python pipeline.py data/toy/donut.jpeg "the donut" --topology --iterations 12
 
-Every stage writes a JSON record plus overlay / mask PNGs into ``--out-dir``.
-The final mask is ``rec_mask.png`` (``seg_mask.png`` is the stage-2 mask);
-``instances.json`` holds every instance's label, confidence, box and stage-2 /
-final mask (COCO RLE), which is what instance-level metrics (AP) read.
+Every stage writes a JSON record plus overlay / mask PNGs into ``--out-dir``:
+    detect.json                       stage 1: boxes (pixels, [x1, y1, x2, y2]), labels,
+                                      confidences, morphology
+    seg.json, seg.png, seg_mask.png   stage 2: per-instance B-splines, overlay, mask
+    seg_box.png                       --refine-box only, when a box moved: the stage-2
+                                      overlay with the adjusted boxes (critiqued in pass 1)
+    recseg_iter<k>[_post].png         overlay after pass k; the _post image is what the
+                                      model critiques in pass k + 1 (absent with
+                                      --no-postprocess)
+    recseg.json, recseg.png,          stage 3: every pass's refinements and residual,
+    rec_mask.png                      final overlay, final mask
+    instances.json                    per instance: label, confidence, box, stage-2 and
+                                      final mask (COCO RLE); what instance metrics (AP) read
+The switches in effect are stored under ``config`` in every JSON record.
+
+Call budget: one call each for stages 1 and 2, at most two per refinement pass (focus
+boxes, then one batched call for all their B-splines), i.e. at most 2T + 2 calls per
+image (2T + 3 with --refine-box); early stopping usually ends well before T.
+Model replies are stochastic, so repeated runs differ slightly.
 """
 
 from __future__ import annotations

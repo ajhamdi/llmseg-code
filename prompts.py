@@ -31,7 +31,7 @@ MASK_COLORS = {
 # Control-point reference ranges (prompt guidance, not enforced in code).
 SEGMENT_CTRL_POINTS_MIN, SEGMENT_CTRL_POINTS_MAX = 16, 64
 FOCUS_CTRL_POINTS_MIN, FOCUS_CTRL_POINTS_MAX = 4, 12
-FOCUS_BOXES_PER_INSTANCE = 6
+FOCUS_BOXES_PER_INSTANCE = 6   # focus boxes each instance may propose per refinement pass
 
 
 # --------------------------------------------------------------------------- #
