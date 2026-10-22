@@ -6,7 +6,8 @@
 
 King Abdullah University of Science and Technology (KAUST)
 
-[![Paper](https://img.shields.io/badge/paper-arXiv-b31b1b.svg)](#citation)
+[![Website](https://img.shields.io/badge/website-llmseg-2ea44f.svg)](https://abdullahamdi.com/llmseg)
+[![Paper](https://img.shields.io/badge/arXiv-2610.29409-b31b1b.svg)](https://arxiv.org/abs/2610.29409)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](#installation)
 [![Providers](https://img.shields.io/badge/API-Gemini%20%7C%20Anthropic%20%7C%20OpenAI%20%7C%20OpenRouter-6f42c1.svg)](#api-keys-and-providers)
 
@@ -25,14 +26,37 @@ from **any one** of Google Gemini, Anthropic, OpenAI or OpenRouter.
 
 ---
 
-## Contents
+## News
 
-- [Installation](#installation)
-- [API keys and providers](#api-keys-and-providers)
-- [Quick start: segment an image](#quick-start-segment-an-image)
-- [Toy examples](#toy-examples)
-- [Evaluation](#evaluation)
-- [Citation](#citation)
+- **[Oct 2026]** 🚀 Code and [paper](#citation) released, with the [project website](https://abdullahamdi.com/llmseg).
+
+## Examples
+
+Reasoning (ReasonSeg) and referring (RefCOCO/+/g) queries; the text is the whole prompt.
+
+<table>
+<tr>
+<td width="33%" align="center"><img src="assets/examples/letters_recseg.jpg" width="100%"><br><sub><i>"What object in the picture could be used as a visual aid for learning about letters and words?"</i></sub></td>
+<td width="33%" align="center"><img src="assets/examples/teabowl_recseg.jpg" width="100%"><br><sub><i>"What container in the picture is most likely to be used next for pouring hot water to make tea?"</i></sub></td>
+<td width="33%" align="center"><img src="assets/examples/speed_recseg.jpg" width="100%"><br><sub><i>"the places where the driver can observe the speed"</i></sub></td>
+</tr>
+<tr>
+<td width="33%" align="center"><img src="assets/examples/refcocog_keyboard_ours.jpg" width="100%"><br><sub><i>"the gray keyboard with the touch pad"</i></sub></td>
+<td width="33%" align="center"><img src="assets/examples/refcocoplus_broccoli_ours.jpg" width="100%"><br><sub><i>"longest stem of broccoli"</i></sub></td>
+<td width="33%" align="center"><img src="assets/examples/refcocoplus_toast_ours.jpg" width="100%"><br><sub><i>"toasted darker larger half"</i></sub></td>
+</tr>
+</table>
+
+Semantic segmentation (Cityscapes): one query names all 19 classes and the model labels every region.
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="assets/examples/city_b_rec.jpg" width="100%"></td>
+<td width="50%" align="center"><img src="assets/examples/city_c_rec.jpg" width="100%"></td>
+</tr>
+</table>
+
+More examples, with interactive input / result sliders, are on the [website](https://abdullahamdi.com/llmseg).
 
 ---
 
@@ -141,11 +165,14 @@ options, the metrics, the full reproduction protocol and the
 ## Citation
 
 ```bibtex
-@article{hamdi2026llmseg,
-  title   = {LLMSeg: Training-Free Text-Prompted Image Segmentation with B-Splines},
-  author  = {Hamdi, Abdullah},
-  journal = {arXiv preprint},
-  year    = {2026}
+@misc{hamdi2026llmsegtrainingfreetextpromptedimage,
+      title={LLMSeg: Training-Free Text-Prompted Image Segmentation with B-Splines},
+      author={Abdullah Hamdi},
+      year={2026},
+      eprint={2610.29409},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2610.29409},
 }
 ```
 
